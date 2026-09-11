@@ -131,11 +131,13 @@
         }
       }, {signal: abort.signal});
       const shell = root.querySelector('.dt-page-shell');
+      const fonts = shell.ownerDocument.fonts;
       let frame = 0;
       let measuredHeight = -1;
+      let fontsReady = false;
       const measure = () => {
         frame = 0;
-        if (!this.isConnected) return;
+        if (!this.isConnected || !fontsReady || fonts?.status === 'loading') return;
         // Observe the content box, never the host whose inline height is being written.
         const height = Math.ceil(shell.getBoundingClientRect().height);
         if (height > 0 && height !== measuredHeight) {
@@ -144,13 +146,26 @@
           this.dispatchEvent(new CustomEvent('doctor-tongue-resize', {bubbles: true, composed: true, detail: {height}}));
         }
       };
-      const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
+      const schedule = () => { if (fontsReady && !frame) frame = requestAnimationFrame(measure); };
+      const waitForFonts = () => {
+        fontsReady = false;
+        Promise.resolve(fonts?.ready).then(() => {
+          if (abort.signal.aborted) return;
+          fontsReady = true;
+          schedule();
+        });
+      };
       const observer = new ResizeObserver(schedule);
       observer.observe(shell);
       root.addEventListener('load', schedule, {capture: true, signal: abort.signal});
+      fonts?.addEventListener('loadingdone', waitForFonts, {signal: abort.signal});
+      fonts?.addEventListener('loadingerror', waitForFonts, {signal: abort.signal});
       disposals.push(() => { observer.disconnect(); cancelAnimationFrame(frame); });
       this.dispose = () => disposals.splice(0).forEach(dispose => dispose());
-      schedule();
+      // Resolve styles first so used fonts are requested before capturing fonts.ready.
+      // Wix can retain a larger first measurement, so never publish fallback-font height.
+      shell.getBoundingClientRect();
+      waitForFonts();
     }
   }
   if (!customElements.get('doctor-tongue-page')) customElements.define('doctor-tongue-page', class extends DoctorTongueSection {});
